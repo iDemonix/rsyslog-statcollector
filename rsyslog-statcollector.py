@@ -1,4 +1,4 @@
-#!/bin/env python2.6
+#!/usr/bin/env python
 
 import datetime
 import time
@@ -12,11 +12,7 @@ import sys
 from collections import defaultdict
 from macpath import basename
 
-
-####
-# DO NOT CHANGE
 __reload = False
-####
 
 def timeit(method):
   def timed(*args, **kw):
@@ -56,6 +52,9 @@ def get_options():
       metavar='base.metric.path', default=False,
       help='Metric base path for Graphite.')
 
+  parser.add_option('-v', action='store_true', default=False, dest='verbose', 
+      help='Turn on verbose output for debugging.')
+
   (opts, args) = parser.parse_args()
   miss_error = '\nSee "' + basename(__file__) + ' -h" for help.'
 
@@ -79,15 +78,16 @@ def SIGReloadHandler(signum, frame):
   __reload = True
   
 def gen_metrics(line):
-  #print 'Generating Metrics'
   global __prev_stats_dict
   _stats_dict = {}
 
   raw_list = line.split(': ')
   _stats_timestamp = raw_list[0]
-  _stats_server = socket.getfqdn().replace('.','_')
-  stat_msg = [raw_list[1].strip().translate(string.maketrans('-(', '_.'), '*/-)').strip(), ' '.join(raw_list[2:]).translate(string.maketrans('-', '_'), '()*/.-').strip()]
-  stat_msg[0] = stat_msg[0].translate(string.maketrans(' ', '_'), ':')
+  _stats_server = socket.getfqdn().replace('.','_')  
+
+  #verboseprint('gen_metrics - raw_list: ' + str(raw_list))
+  stat_msg = [raw_list[1].strip().translate(string.maketrans('.-(/', '__..'), '*)').strip(), ' '.join(raw_list[2:]).translate(string.maketrans('-', '_'), '()*.').strip()]
+  stat_msg[0] = stat_msg[0].translate(string.maketrans(' :', '_-'))
   stat_msg[1] = dict((k, int(v)) for k, v in [x.split('=') for x in stat_msg[1].strip().split(' ')])
   for k, v in stat_msg[1].iteritems():
     metric_name = stat_msg[0] + '.' + k
@@ -96,6 +96,7 @@ def gen_metrics(line):
 
 def submit(metric_root, filename, metrics, server):
   graphite_server = server.split(':')
+  verboseprint('Submitting to ' + graphite_server[0] + ':' + graphite_server[1])
   graphite_socket = {'socket': socket.socket( socket.AF_INET, socket.SOCK_STREAM ), 'host': graphite_server[0], 'port': int(graphite_server[1])}
   time_struct = time.strptime(metrics[0])
   time_epoch = time.mktime(time_struct)
@@ -109,7 +110,7 @@ def submit(metric_root, filename, metrics, server):
       metric_value = 0
     metric_string = "%s %s %d" % ( metric_root + '.' + metrics[1] + '.'  + filename.split('.')[0] + '.' + metric_name, metric_value, time_epoch )
     try:
-      #print 'Metric String: %s' % (metric_string,)
+      verboseprint('Metric submitted: ' + metric_string)
       graphite_socket['socket'].send( "%s\n" % metric_string )
     except socket.error:
       pass
@@ -124,12 +125,15 @@ def main(options, arguments):
   fd = open(options.file, 'r')
   fd.seek(0, os.SEEK_END)
 
+  verboseprint('Starting')
+
   while True:
 
     for line in fd.readlines():
       metrics = gen_metrics(line)
       submit(metric_root=options.metric_root, filename=options.file.split('/')[-1], metrics=metrics, server=options.server)
     else:
+      verboseprint('Sleeping for 10 seconds')
       time.sleep(10)
 
     if __reload == True:
@@ -140,4 +144,13 @@ def main(options, arguments):
 
 if __name__ == '__main__':
   opts, args = get_options()
+  
+  if opts.verbose:
+    def verboseprint(*args):
+        for arg in args:
+           print str(datetime.datetime.now().time()) + ' ' + arg,
+        print
+  else:   
+    verboseprint = lambda *a: None # donothing 
+    
   main(opts, args)
